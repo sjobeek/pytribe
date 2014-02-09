@@ -21,7 +21,7 @@ query_thread.start()
 #Wait for data to be collected
 time.sleep(1)
 
-#Extract the 50 samples from the queue
+#Extract all of the samples from the queue
 list_of_data_dicts = pytribe.extract_queue(q)
 
 #First "average" data point

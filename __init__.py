@@ -6,12 +6,25 @@ def jprint(your_json):
     return json.dumps(parsed, indent=4, sort_keys=True)
 
 
-def query_tracker(message=None):
+def query_tracker(message="""
+                    {
+                        "category": "tracker",
+                        "request" : "get",
+                        "values": [ "frame" ]
+                    }""",
+                  get_status=False, host='localhost',
+                  port=6555, buffer_size=1024,
+                  ):
+    """Directly query the eye-tribe tracker.
+
+    Data is returned as a nested set of dictionaries and lists.
+    The eye tracker server must be running and calibrated.
+    Use get_status=True to over-ride message and query status."""
+
     import socket
-    HOST = 'localhost'
-    PORT = 6555
-    BUFFER_SIZE = 1024
-    if message is None:
+    import json
+    import time
+    if get_status == True:
         message = """{
             "category": "tracker",
             "request" : "get",
@@ -19,12 +32,15 @@ def query_tracker(message=None):
         }"""
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((HOST, PORT))
+    s.connect((host, port))
     s.send(message)
-    data = s.recv(BUFFER_SIZE)
+    #pause to allow message to come through
+    time.sleep(0.01)
+    data = s.recv(buffer_size)
     s.close()
-    return jprint(data)
-
+    try: parsed = json.loads(data)
+    except ValueError: parsed = None
+    return parsed
 
 def extract_queue(q, l=None):
     if l == None: l = []
