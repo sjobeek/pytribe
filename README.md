@@ -12,4 +12,4 @@ To simply read a single set of data, first `import pytribe` then `data = pytribe
 Installation
 ____________
 
-To install with pip, use 'pip install git+https://github.com/sjobeek/pytribe.git`
+To install with pip, use `pip install git+https://github.com/sjobeek/pytribe.git`
