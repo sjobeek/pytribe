@@ -60,7 +60,7 @@ def queue_tracker_frames(queue, message=None, interval=0.03, points=100,
         data = s.recv(1024)
         try: parsed = parse_func(json.loads(data))
         except ValueError: parsed = None
-        q.put(parsed)
+        queue.put(parsed)
         time.sleep(interval)
     s.close()
     try: parsed = json.loads(data)
