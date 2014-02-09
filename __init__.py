@@ -43,8 +43,7 @@ def connect_to_tracker(host = 'localhost', port = 6555, buffer_size = 1024):
     return s
 
 
-def queue_tracker_frames(queue, message=None, interval=0.03, points=100,
-                        parse_func = lambda x: x['values']['frame']['raw']):
+def queue_tracker_frames(queue, message=None, interval=0.03, points=100):
     if message == None:
         message = """
         {
@@ -58,13 +57,11 @@ def queue_tracker_frames(queue, message=None, interval=0.03, points=100,
     for _ in range(points):
         s.send(message)
         data = s.recv(1024)
-        try: parsed = parse_func(json.loads(data))
+        try: parsed = json.loads(data)
         except ValueError: parsed = None
         queue.put(parsed)
         time.sleep(interval)
     s.close()
-    try: parsed = json.loads(data)
-    except ValueError: parsed = None
 
 
 def raw_value_tuples(raw_dict):
