@@ -9,7 +9,7 @@ hb_thread = threading.Thread(target=pytribe.heartbeat_loop,
 hb_thread.daemon = True
 hb_thread.start()
 
-#Give the tracker time to wait up
+#Give the tracker time to wake up
 time.sleep(1)
 
 #Get 50 raw samples from the eye tracker and add to a queue
