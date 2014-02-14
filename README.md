@@ -18,7 +18,7 @@ Usage
 
 Currently the eyetribe server must be started, and then calibrated using the eyetribe UI before this API can be used. The eyetribe UI does not need to remain open after calibration.
 
-The current version ONLY supports simple reading of data using the pull method.
+The current version ONLY supports simple reading of data using the pull and push methods.
 
 To simply read a single set of data, first `import pytribe` then `data = pytribe.query_tracker()`
 
