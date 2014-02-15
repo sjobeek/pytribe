@@ -25,6 +25,11 @@ To simply read a single set of data, first `import pytribe` then `data = pytribe
 See `example.py` for an example of how to read tracking data using non-blocking threads and a queue. This is useful for GUI applications where you can't allow the data collection polling to block the main loop.
 
 
+zoom_ui extra requirements
+------
+
+Windows only:  Install binary pyHook from http://sourceforge.net/apps/mediawiki/pyhook/index.php?title=Main_Page
+
 
 Disclaimer
 -----
