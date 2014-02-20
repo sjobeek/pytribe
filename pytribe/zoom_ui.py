@@ -14,30 +14,47 @@ def current_bitmap(zoom_map):
 
     zm = zoom_map
     bitmap = zm.base_bitmap
-    gaze_avg = zm.base_center
     yield bitmap
-    x = 1.0
     while True:
-        x *= 1.05
-        gaze_data = pytribe.query_tracker()
-        if gaze_data is not None:
-            gaze_avg_dict = gaze_data['values']['frame']['avg']
-            gaze_avg = (gaze_avg_dict['x'],gaze_avg_dict['y'])
-        zm.zoom_base(center=gaze_avg, factor=x)
+        #gaze_data = pytribe.query_tracker()
+        #if gaze_data is not None:
+        #    gaze_avg_dict = gaze_data['values']['frame']['avg']
+        #    gaze_avg = (gaze_avg_dict['x'],gaze_avg_dict['y'])
+        #else:
+        #    gaze_avg = zm.base_center
+        zm.zoom_in(zoom_factor=1.05)
         bitmap = zm.zoom_bitmap #  scale_bitmap(bitmap, 400*x, 400*x)
         yield bitmap
 
+def parse_center(data_queue, default=None):
+    gaze_data_update = pytribe.extract_queue(data_queue)
+    if len(gaze_data_update) > 0:
+        center_dict = gaze_data_update[-1]['values']['frame']['avg']
+        center = (center_dict['x'], center_dict['y'])
+    else:
+        center = default
+    return center
 
 class ZoomMap(object):
     """Contains original bitmap, plus transformed zoom coordinates.
 
     Methods allow for translation between "base" coordinates and "zoom" coordinates"""
-    def __init__(self, center=(400,400), size=(400,400)):
+    def __init__(self, center=(400,400), size=(400,400), data_queue=None):
 
         self.base_center = center
         self.base_size = size
+        self.base_width = size[0]*1.0
+        self.base_height = size[1]*1.0
+        self.data_q = data_queue
+
+        self.current_zoom_factor = 1.0
+        self.zoom_center_offset_x = 0.0
+        self.zoom_center_offset_y = 0.0
+
         self.base_loc = (int(center[0] - size[0]/2.0),
                          int(center[1] - size[1]/2.0))
+        self.previous_center = center
+
         #TODO: Handle case where base_loc +size includes areas outside of the screen?
         if self.base_loc[0] < 0: self.base_loc = (0, self.base_loc[1])
         if self.base_loc[1] < 0: self.base_loc = (self.base_loc[0], 0)
@@ -47,39 +64,66 @@ class ZoomMap(object):
         self.base_image = wx.ImageFromBitmap(self.base_bitmap)
 
 
-    def zoom_base(self, center=(0, 0), factor=1.0):
+    def zoom_size_px(self):
+        return (self.base_width * self.current_zoom_factor,
+                self.base_height * self.current_zoom_factor)
+
+    def rel_zoom_loc(self):
+        zsp = self.zoom_size_px()
+        return (self.zoom_center_offset_x * self.current_zoom_factor +
+                (zsp[0] - self.base_width)/2.0,
+                self.zoom_center_offset_y * self.current_zoom_factor +
+                (zsp[1] - self.base_width)/2.0)
+
+    def zoom_in(self, zoom_factor=1.05, zoomed_coords=True):
+
+        gaze_data_update = parse_center(self.data_q)
+        if gaze_data_update not in [None, (0,0)]:
+            self.previous_center = gaze_data_update
+
+        center = self.previous_center
+
+        self.current_zoom_factor *= zoom_factor
+
+        zoom_pan_speed = 0.2
+
+        self.zoom_center_offset_x += (zoom_pan_speed *
+                                      (center[0] - self.base_center[0]) /
+                                      self.current_zoom_factor)
+        self.zoom_center_offset_y += (zoom_pan_speed *
+                                      (center[1] - self.base_center[1]) /
+                                      self.current_zoom_factor)
 
 
-        #width/height to crop new image to before scaling up
-        _width = self.base_size[0] / factor
-        _height = self.base_size[1] / factor
+        #width/height to scale new image to
+        _width, _height = self.zoom_size_px()
+
         #Amount to shift new image down/right before scaling up
-        _x = center[0] - self.base_center[0]
-        _y = center[1] - self.base_center[1]
-
-        #Prevent zooming in to sub-pixel range
-        if _width <1: _width = 1
-        if _height <=1: _height = 1
+        _x_offset, _y_offset = self.rel_zoom_loc()
 
         #Prevent zooming outside of original box
-        if _x < 0: _x = 0
-        if _y < 0: _y = 0
-        if _x + _width > self.base_size[0]: _x = self.base_size[0] - _width
-        if _y + _height > self.base_size[1]: _y = self.base_size[1] - _height
+        if _x_offset < 0: _x_offset = 0
+        if _y_offset < 0: _y_offset = 0
+        if _x_offset + self.base_size[0] > _width:
+            _x_offset = _width - self.base_size[0]
+        if _y_offset + self.base_size[1] > _height:
+            _y_offset = _height - self.base_size[1]
 
         #Rect can be replaced by x,y,width,height tuple
-        sub_image = self.base_image.GetSubImage((_x, _y, _width, _height))
+        #sub_image = self.base_image.GetSubImage((_x_offset, _y_offset, _width, _height))
+        print center
+        print self.zoom_center_offset_x, self.zoom_center_offset_y
+        print _x_offset, _y_offset, _width, _height, self.zoom_size_px()
         #Changes image in-place to
         #sub_image = self.base_image
         #sub_image.Resize(size=(_width, _height), pos=(-2, -2))
 
-        zoomed_image = sub_image.Scale(self.base_size[0],
-                                       self.base_size[1],
-                                       wx.IMAGE_QUALITY_HIGH)
-        self.zoom_bitmap = wx.BitmapFromImage(zoomed_image)
+        zoomed_image = self.base_image.Scale(_width, _height,
+                                             wx.IMAGE_QUALITY_NORMAL)
+        sub_image = zoomed_image.GetSubImage((_x_offset, _y_offset,
+                                              self.base_size[0], self.base_size[1]))
 
-    def zoom_transformed(self, center, factor):
-        pass
+        self.zoom_bitmap = wx.BitmapFromImage(sub_image)
 
 
 class ZoomCanvas(BufferedCanvas):
@@ -101,7 +145,8 @@ class ZoomFrame(wx.Frame):
 
     """Main Frame holding the Panel."""
     def __init__(self, *args,  **kwargs):
-        self.tick_ms = kwargs.pop('tick_ms', 25) # Remove non-standard kwargs
+        self.tick_ms = kwargs.pop('tick_ms', 125) # Remove non-standard kwargs
+        self.data_q = kwargs.pop('data_queue', None)
         wx.Frame.__init__(self, *args, **kwargs)
 
         self.raw_data_q = Queue.Queue()
@@ -128,17 +173,18 @@ class ZoomFrame(wx.Frame):
     def on_key_down_event(self, event):
         if event.Key == 'Numlock' and not self.key_now_down:  # \ key = Oem_5
 
-            gaze_data = pytribe.query_tracker()
-            if gaze_data is not None:
-                gaze_avg_dict = gaze_data['values']['frame']['avg']
-                gaze_avg = (gaze_avg_dict['x'],gaze_avg_dict['y'])
-                zm = ZoomMap(center=gaze_avg, size=(400, 400))
+            gaze_avg = parse_center(self.data_q)
+            print "Initial Base Target: " + gaze_avg
+            if gaze_avg is not None:
+                zm = ZoomMap(center=gaze_avg, size=(400, 400),
+                             data_queue=self.data_q)
                 self.SetSize(zm.base_size)
                 self.SetPosition(zm.base_loc)
                 self.key_now_down = True
                 self.canvas.reset(zm)
                 self.timer.Start(self.tick_ms)
                 self.Show()
+                print "key down"
 
         return True  # for pass through key events, False to eat Keys
 
@@ -162,14 +208,15 @@ class ZoomFrame(wx.Frame):
 def main():
 
 
-
+    data_q = Queue.Queue()
 
     app = wx.App(False)
     frame = ZoomFrame(None,
                       wx.ID_ANY,
                       title="Zoom Frame",
                       style=wx.BORDER_NONE | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR,
-                      tick_ms=25)
+                      tick_ms=40,
+                      data_queue=data_q)
 
 
     hm = pyHook.HookManager()
@@ -177,10 +224,10 @@ def main():
     hm.KeyUp = frame.on_key_up_event
     hm.HookKeyboard()
 
-
-    heartbeat_thread = threading.Thread(target=pytribe.heartbeat_loop, args=(100,))
-    heartbeat_thread.daemon = True
-    heartbeat_thread.start()
+    data_thread = threading.Thread(target=pytribe.queue_tracker_frames,
+                                   args=(data_q, None, 0.02))
+    data_thread.daemon = True
+    data_thread.start()
 
     #frame.Show()
     app.MainLoop()

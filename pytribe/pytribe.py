@@ -59,7 +59,7 @@ def connect_to_tracker(host = 'localhost', port = 6555, buffer_size = 1024):
     return s
 
 
-def queue_tracker_frames(queue, message=None, interval=0.01, loop_limit=None):
+def queue_tracker_frames(queue, message=None, interval=0.01):
     """Read data from tracker in PUSH mode.
 
     Data is pushed into queue as it arrives, once per interval seconds.
@@ -80,7 +80,6 @@ def queue_tracker_frames(queue, message=None, interval=0.01, loop_limit=None):
     s = connect_to_tracker()
     s.send(message)
     _ = s.recv(2**15)  # Discard first response
-
     loop = 0
     while True:
         loop += 1
@@ -90,7 +89,10 @@ def queue_tracker_frames(queue, message=None, interval=0.01, loop_limit=None):
                      if line.split()]
         for point in data_list:
             queue.put(point)
-        if loop_limit is not None and loop > loop_limit: break
+        if loop > 20:
+            s.send(message)
+            _ = s.recv(2**15)
+            loop = 0
     s.close()
 
 
@@ -103,8 +105,9 @@ def heartbeat_loop(loops=None):
     if loops is None:
         while True:
             query_tracker(message='{"category": "heartbeat"}')
-            time.sleep(0.3)
+            time.sleep(0.2)
+            print "HB"
     else:
         for _ in range(loops):
             query_tracker(message='{"category": "heartbeat"}')
-            time.sleep(0.3)
+            time.sleep(0.2)
