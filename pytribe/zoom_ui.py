@@ -7,6 +7,17 @@ import pytribe
 import pyHook
 from ScreenShotWX import screencapture
 
+def current_tracking_center():
+    pass
+
+def get_tracking_data():
+    pass
+
+def calc_next_zoom_center():
+    pass
+
+def log_zm():
+    pass
 
 
 
@@ -39,13 +50,14 @@ class ZoomMap(object):
     """Contains original bitmap, plus transformed zoom coordinates.
 
     Methods allow for translation between "base" coordinates and "zoom" coordinates"""
-    def __init__(self, center=(400,400), size=(400,400), data_queue=None):
+    def __init__(self, center=(400,400), size=(400,400), data_queue=None, zoom_factor=1.05):
 
         self.base_center = center
         self.base_size = size
         self.base_width = size[0]*1.0
         self.base_height = size[1]*1.0
         self.data_q = data_queue
+        self.zoom_factor = 1.05
 
         self.current_zoom_factor = 1.0
         self.zoom_center_offset_x = 0.0
@@ -115,7 +127,7 @@ class ZoomMap(object):
         print self.zoom_center_offset_x, self.zoom_center_offset_y
         print _x_offset, _y_offset, _width, _height, self.zoom_size_px()
         #Changes image in-place to
-        #sub_image = self.base_image
+        #sub_image = self.base_im age
         #sub_image.Resize(size=(_width, _height), pos=(-2, -2))
 
         zoomed_image = self.base_image.Scale(_width, _height,
@@ -125,84 +137,128 @@ class ZoomMap(object):
 
         self.zoom_bitmap = wx.BitmapFromImage(sub_image)
 
-
-class ZoomCanvas(BufferedCanvas):
-
-    def __init__(self, *args, **kwargs):
-        #Initialization of bitmap_gen MUST come first
-        self.bitmap_gen = current_bitmap(kwargs.pop('zoom_map'))
-        BufferedCanvas.__init__(self, *args, **kwargs)
-
-    def draw(self, dc):
-        dc.DrawBitmap(next(self.bitmap_gen), 0, 0)
-
-    def reset(self, zoom_map):
-        self.bitmap_gen = current_bitmap(zoom_map)
-        self.update()
-
+    def next_zoom_bitmap(self):
+        """Returns the next bitmap to be displayed on screen"""
+        self.zoom_in(zoom_factor=self.zoom_factor)
+        return self.zoom_bitmap
 
 class ZoomFrame(wx.Frame):
 
-    """Main Frame holding the Panel."""
+    """Main Frame holding the logic and data structures of the program.
+
+    Must pass tick interval and data queue to be used with the tracker"""
     def __init__(self, *args,  **kwargs):
         self.tick_ms = kwargs.pop('tick_ms', 125) # Remove non-standard kwargs
         self.data_q = kwargs.pop('data_queue', None)
         wx.Frame.__init__(self, *args, **kwargs)
 
         self.raw_data_q = Queue.Queue()
-        self.key_now_down = False
+        self.alt_key_now_down = False
+        self.space_key_now_down = False
 
-        #First argument is "parent" (ZoomFrame here), second is "ID"
-        #self.canvas = ZoomCanvas(self, wx.ID_ANY,
-        #                         size=kwargs['size'])
-        #self.canvas.bitmap = wx.Bitmap('400x400_test.bmp')
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.update_zoom, self.timer)
+        #Initialize canvas with dummy zoom_map (just to start program)
         self.canvas = ZoomCanvas(self, wx.ID_ANY,
                                  size=(400,400),
                                  zoom_map=ZoomMap(center=(400,400),
-                                                  size=(400,400)))
-
-
-
-        #self.timer.Start(self.tick_ms)
+                                                  size=(400,400),
+                                                  data_queue=self.data_q))
 
 
     def on_key_down_event(self, event):
-        if event.Key == 'Numlock' and not self.key_now_down:  # \ key = Oem_5
+        """Detects when zoom hotkey is pressed.
+        """
+        self.zoom_canceled = False
+        alt_pressed = event.Key == 'Rmenu' or event.Key == 'Lmenu'
+        if alt_pressed:
+            # Cancel zoom early if alt pressed twice
+            #if self.space_key_now_down and not self.alt_key_now_down:
+                #self.stop_zoom()
+            self.alt_key_now_down = True
 
-            gaze_avg = parse_center(self.data_q)
-            print "Initial Base Target: " + gaze_avg
-            if gaze_avg is not None:
-                zm = ZoomMap(center=gaze_avg, size=(400, 400),
-                             data_queue=self.data_q)
-                self.SetSize(zm.base_size)
-                self.SetPosition(zm.base_loc)
-                self.key_now_down = True
-                self.canvas.reset(zm)
-                self.timer.Start(self.tick_ms)
-                self.Show()
-                print "key down"
+        if (event.Key == 'Space' and
+            self.alt_key_now_down and not
+            self.space_key_now_down):
+            self.space_key_now_down = True
+            ###### BEGIN ZOOM #####
+            self.start_zoom()
+
+        #Cancel zoom early if alt pressed twice
+        if alt_pressed and self.space_key_now_down:
+            self.zoom_canceled = True
+            self.stop_zoom()
+            pass
+
+        if (alt_pressed or event.Key == 'Space' and self.space_key_now_down):
+            return False  # Do not pass through key event while zooming
 
         return True  # for pass through key events, False to eat Keys
+
+
+    def on_key_up_event(self, event):
+        if event.Key == 'Rmenu' or event.Key == 'Lmenu':
+            self.alt_key_now_down = False
+        if event.Key == 'Space':
+            self.space_key_now_down = False
+            if not self.zoom_canceled:
+                self.stop_zoom()
+                self.click_target()
+        return True
+
+
+    def click_target(self):
+        #TODO: Implement click target logic
+        print "Emtpy Press Now"
+        pass
+
+
+    def start_zoom(self):
+        """Key press detected: Begin zoom sequence"""
+
+        gaze_avg = parse_center(self.data_q)
+        print "Initial Base Target: " + str(gaze_avg)
+        if gaze_avg is not None:
+            zm = ZoomMap(center=gaze_avg, size=(400, 400),
+                         data_queue=self.data_q)
+            self.SetSize(zm.base_size)
+            self.SetPosition(zm.base_loc)
+            self.canvas.reset(zm)
+            self.timer.Start(self.tick_ms)
+            self.Show()
+
+
+    def stop_zoom(self):
+        self.Hide()
+        self.timer.Stop()
+
 
     def update_zoom(self, event):  # This "event" is required...
         self.canvas.update()
 
-    def on_key_up_event(self, event):
-
-        self.key_now_down = False
-        self.Hide()
-        self.timer.Stop()
-        return True
 
     def onClose(self, event):
         self.timer.Stop()
-        self.query_thread.stop()
         self.Show(False)
         self.Destroy()
+
+
+class ZoomCanvas(BufferedCanvas):
+
+    def __init__(self, *args, **kwargs):
+        #Initialization of bitmap_gen MUST come first
+        self.zm = kwargs.pop('zoom_map')
+        BufferedCanvas.__init__(self, *args, **kwargs)
+
+    def draw(self, dc):
+        dc.DrawBitmap(self.zm.next_zoom_bitmap(), 0, 0)
+
+    def reset(self, zoom_map):
+        self.zm = zoom_map
+        self.update()
+
 
 
 def main():
