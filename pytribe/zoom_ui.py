@@ -6,6 +6,9 @@ from bufferedcanvas import BufferedCanvas
 import pytribe
 import pyHook
 from ScreenShotWX import screencapture
+import win32con
+import win32api
+
 
 def current_tracking_center():
     pass
@@ -87,6 +90,10 @@ class ZoomMap(object):
                 self.zoom_center_offset_y * self.current_zoom_factor +
                 (zsp[1] - self.base_width)/2.0)
 
+    def abs_zoom_loc(self):
+        return (int(self.base_center[0] + self.zoom_center_offset_x),
+                int(self.base_center[1] + self.zoom_center_offset_y))
+
     def zoom_in(self, zoom_factor=1.05, zoomed_coords=True):
 
         gaze_data_update = parse_center(self.data_q)
@@ -121,15 +128,7 @@ class ZoomMap(object):
         if _y_offset + self.base_size[1] > _height:
             _y_offset = _height - self.base_size[1]
 
-        #Rect can be replaced by x,y,width,height tuple
-        #sub_image = self.base_image.GetSubImage((_x_offset, _y_offset, _width, _height))
-        print center
-        print self.zoom_center_offset_x, self.zoom_center_offset_y
-        print _x_offset, _y_offset, _width, _height, self.zoom_size_px()
-        #Changes image in-place to
-        #sub_image = self.base_im age
-        #sub_image.Resize(size=(_width, _height), pos=(-2, -2))
-
+        #TODO: Trim or otherwise reduce computation for high-zoom levels...
         zoomed_image = self.base_image.Scale(_width, _height,
                                              wx.IMAGE_QUALITY_NORMAL)
         sub_image = zoomed_image.GetSubImage((_x_offset, _y_offset,
@@ -142,6 +141,18 @@ class ZoomMap(object):
         self.zoom_in(zoom_factor=self.zoom_factor)
         return self.zoom_bitmap
 
+    def click_zoom_target(self):
+        """Clicks once on zoom target"""
+        prev_x, prev_y = win32api.GetCursorPos()
+        click_x, click_y = self.abs_zoom_loc()
+        print "Final Click Location: ", (click_x, click_y)
+        win32api.SetCursorPos((click_x,click_y))
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN,click_x,click_y,0,0)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,click_x,click_y,0,0)
+        win32api.SetCursorPos((prev_x,prev_y))
+
+
+
 class ZoomFrame(wx.Frame):
 
     """Main Frame holding the logic and data structures of the program.
@@ -153,86 +164,101 @@ class ZoomFrame(wx.Frame):
         wx.Frame.__init__(self, *args, **kwargs)
 
         self.raw_data_q = Queue.Queue()
-        self.alt_key_now_down = False
-        self.space_key_now_down = False
+        self.mod_key_now_down = False
+        self.trigger_key_now_down = False
+        self.now_zooming = False
+
+        #Define zoom trigger keys:
+        self.mod_required = True
+        self.cancel_on_mod_down = False
+        self.mod_keys = ['Rmenu', 'Lmenu']
+        self.trigger_keys = ['Space']
 
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
-        self.timer = wx.Timer(self)
-        self.Bind(wx.EVT_TIMER, self.update_zoom, self.timer)
+        self.draw_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.update_zoom, self.draw_timer)
         #Initialize canvas with dummy zoom_map (just to start program)
+        self.current_zoom_map = ZoomMap(center=(400,400), size=(400,400),
+                                        data_queue=self.data_q)
         self.canvas = ZoomCanvas(self, wx.ID_ANY,
                                  size=(400,400),
-                                 zoom_map=ZoomMap(center=(400,400),
-                                                  size=(400,400),
-                                                  data_queue=self.data_q))
+                                 zoom_map=self.current_zoom_map)
 
 
     def on_key_down_event(self, event):
         """Detects when zoom hotkey is pressed.
         """
+        #TODO: Seems to be a bug: releasing alt sometimes stops zoom
         self.zoom_canceled = False
-        alt_pressed = event.Key == 'Rmenu' or event.Key == 'Lmenu'
-        if alt_pressed:
-            # Cancel zoom early if alt pressed twice
-            #if self.space_key_now_down and not self.alt_key_now_down:
-                #self.stop_zoom()
-            self.alt_key_now_down = True
 
-        if (event.Key == 'Space' and
-            self.alt_key_now_down and not
-            self.space_key_now_down):
-            self.space_key_now_down = True
-            ###### BEGIN ZOOM #####
+        mod_down_event = event.Key in self.mod_keys
+        trigger_down_event = event.Key in self.trigger_keys
+
+        if mod_down_event:
+            self.mod_key_now_down = True
+            # Cancel zoom early if mod key pressed down while zooming
+            if self.trigger_key_now_down and self.cancel_on_mod_down:
+                self.zoom_canceled = True
+                self.stop_zoom()
+
+        #Start zooming if trigger key pressed while mod_key is down
+        if (trigger_down_event and
+            (self.mod_key_now_down or not self.mod_required) and
+            not self.trigger_key_now_down):
+            self.trigger_key_now_down = True
             self.start_zoom()
 
-        #Cancel zoom early if alt pressed twice
-        if alt_pressed and self.space_key_now_down:
+        # Do not pass through mod or trigger key events while zooming
+        if (self.trigger_key_now_down and
+            (mod_down_event or trigger_down_event)):
+            return False
+
+        #Use Escape key as backup zoom cancel
+        if event.Key == "Escape" and self.trigger_key_now_down:
             self.zoom_canceled = True
             self.stop_zoom()
-            pass
-
-        if (alt_pressed or event.Key == 'Space' and self.space_key_now_down):
-            return False  # Do not pass through key event while zooming
+            return False #Do not pass this cancel escape command
 
         return True  # for pass through key events, False to eat Keys
 
 
     def on_key_up_event(self, event):
-        if event.Key == 'Rmenu' or event.Key == 'Lmenu':
-            self.alt_key_now_down = False
-        if event.Key == 'Space':
-            self.space_key_now_down = False
-            if not self.zoom_canceled:
+        if event.Key in self.mod_keys:
+            self.mod_key_now_down = False
+        if event.Key in self.trigger_keys:
+            self.trigger_key_now_down = False
+            if self.now_zooming and not self.zoom_canceled:
                 self.stop_zoom()
                 self.click_target()
         return True
 
 
     def click_target(self):
-        #TODO: Implement click target logic
-        print "Emtpy Press Now"
+        self.current_zoom_map.click_zoom_target()
         pass
 
 
     def start_zoom(self):
         """Key press detected: Begin zoom sequence"""
-
+        self.now_zooming = True
         gaze_avg = parse_center(self.data_q)
-        print "Initial Base Target: " + str(gaze_avg)
+        print "Initial Base Target:  ", (int(gaze_avg[0]), int(gaze_avg[1]))
         if gaze_avg is not None:
             zm = ZoomMap(center=gaze_avg, size=(400, 400),
                          data_queue=self.data_q)
+            self.current_zoom_map = zm
             self.SetSize(zm.base_size)
             self.SetPosition(zm.base_loc)
             self.canvas.reset(zm)
-            self.timer.Start(self.tick_ms)
+            self.draw_timer.Start(self.tick_ms)
             self.Show()
 
 
     def stop_zoom(self):
+        self.now_zooming = False
         self.Hide()
-        self.timer.Stop()
+        self.draw_timer.Stop()
 
 
     def update_zoom(self, event):  # This "event" is required...
@@ -240,7 +266,7 @@ class ZoomFrame(wx.Frame):
 
 
     def onClose(self, event):
-        self.timer.Stop()
+        self.draw_timer.Stop()
         self.Show(False)
         self.Destroy()
 
