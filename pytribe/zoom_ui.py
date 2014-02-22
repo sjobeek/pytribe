@@ -13,32 +13,18 @@ import win32api
 def current_tracking_center():
     pass
 
+
 def get_tracking_data():
     pass
+
 
 def calc_next_zoom_center():
     pass
 
+
 def log_zm():
     pass
 
-
-
-def current_bitmap(zoom_map):
-
-    zm = zoom_map
-    bitmap = zm.base_bitmap
-    yield bitmap
-    while True:
-        #gaze_data = pytribe.query_tracker()
-        #if gaze_data is not None:
-        #    gaze_avg_dict = gaze_data['values']['frame']['avg']
-        #    gaze_avg = (gaze_avg_dict['x'],gaze_avg_dict['y'])
-        #else:
-        #    gaze_avg = zm.base_center
-        zm.zoom_in(zoom_factor=1.05)
-        bitmap = zm.zoom_bitmap #  scale_bitmap(bitmap, 400*x, 400*x)
-        yield bitmap
 
 def parse_center(data_queue, default=None):
     gaze_data_update = pytribe.extract_queue(data_queue)
@@ -49,18 +35,21 @@ def parse_center(data_queue, default=None):
         center = default
     return center
 
+
 class ZoomMap(object):
     """Contains original bitmap, plus transformed zoom coordinates.
 
     Methods allow for translation between "base" coordinates and "zoom" coordinates"""
-    def __init__(self, center=(400,400), size=(400,400), data_queue=None, zoom_factor=1.05):
+    def __init__(self, center=(400, 400), size=(400, 400), data_queue=None,
+                 mod_key=None, zoom_factor=1.05):
 
         self.base_center = center
         self.base_size = size
         self.base_width = size[0]*1.0
         self.base_height = size[1]*1.0
         self.data_q = data_queue
-        self.zoom_factor = 1.05
+        self.zoom_factor = zoom_factor
+        self.mod_key = mod_key
 
         self.current_zoom_factor = 1.0
         self.zoom_center_offset_x = 0.0
@@ -71,13 +60,14 @@ class ZoomMap(object):
         self.previous_center = center
 
         #TODO: Handle case where base_loc +size includes areas outside of the screen?
-        if self.base_loc[0] < 0: self.base_loc = (0, self.base_loc[1])
-        if self.base_loc[1] < 0: self.base_loc = (self.base_loc[0], 0)
+        if self.base_loc[0] < 0:
+            self.base_loc = (0, self.base_loc[1])
+        if self.base_loc[1] < 0:
+            self.base_loc = (self.base_loc[0], 0)
 
         self.base_bitmap = screencapture(self.base_loc, self.base_size)
         self.zoom_bitmap = self.base_bitmap
         self.base_image = wx.ImageFromBitmap(self.base_bitmap)
-
 
     def zoom_size_px(self):
         return (self.base_width * self.current_zoom_factor,
@@ -95,9 +85,9 @@ class ZoomMap(object):
                 int(self.base_center[1] + self.zoom_center_offset_y))
 
     def zoom_in(self, zoom_factor=1.05, zoomed_coords=True):
-
+        #TODO: Clean and refactor this entire method...  it's a mess
         gaze_data_update = parse_center(self.data_q)
-        if gaze_data_update not in [None, (0,0)]:
+        if gaze_data_update not in [None, (0, 0)]:
             self.previous_center = gaze_data_update
 
         center = self.previous_center
@@ -113,7 +103,6 @@ class ZoomMap(object):
                                       (center[1] - self.base_center[1]) /
                                       self.current_zoom_factor)
 
-
         #width/height to scale new image to
         _width, _height = self.zoom_size_px()
 
@@ -121,8 +110,8 @@ class ZoomMap(object):
         _x_offset, _y_offset = self.rel_zoom_loc()
 
         #Prevent zooming outside of original box
-        if _x_offset < 0: _x_offset = 0
-        if _y_offset < 0: _y_offset = 0
+        if _x_offset < 0:  x_offset = 0
+        if _y_offset < 0:  _y_offset = 0
         if _x_offset + self.base_size[0] > _width:
             _x_offset = _width - self.base_size[0]
         if _y_offset + self.base_size[1] > _height:
@@ -146,10 +135,14 @@ class ZoomMap(object):
         prev_x, prev_y = win32api.GetCursorPos()
         click_x, click_y = self.abs_zoom_loc()
         print "Final Click Location: ", (click_x, click_y)
-        win32api.SetCursorPos((click_x,click_y))
-        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN,click_x,click_y,0,0)
-        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,click_x,click_y,0,0)
-        win32api.SetCursorPos((prev_x,prev_y))
+        win32api.SetCursorPos((click_x, click_y))
+        if self.mod_key == 'NotCurrentlyUsed':  # Set mod-key for right-click if desired
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, click_x, click_y, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, click_x, click_y, 0, 0)
+        else:
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, click_x, click_y, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, click_x, click_y, 0, 0)
+        win32api.SetCursorPos((prev_x, prev_y))
 
 
 
@@ -173,16 +166,18 @@ class ZoomFrame(wx.Frame):
         self.cancel_on_mod_down = False
         self.mod_keys = ['Rmenu', 'Lmenu']
         self.trigger_keys = ['Space']
+        self.current_mod_key = None
+        self.zoom_canceled = False
 
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
         self.draw_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.update_zoom, self.draw_timer)
         #Initialize canvas with dummy zoom_map (just to start program)
-        self.current_zoom_map = ZoomMap(center=(400,400), size=(400,400),
+        self.current_zoom_map = ZoomMap(center=(400, 400), size=(400, 400),
                                         data_queue=self.data_q)
         self.canvas = ZoomCanvas(self, wx.ID_ANY,
-                                 size=(400,400),
+                                 size=(400, 400),
                                  zoom_map=self.current_zoom_map)
 
 
@@ -197,6 +192,7 @@ class ZoomFrame(wx.Frame):
 
         if mod_down_event:
             self.mod_key_now_down = True
+            self.current_mod_key = event.Key
             # Cancel zoom early if mod key pressed down while zooming
             if self.trigger_key_now_down and self.cancel_on_mod_down:
                 self.zoom_canceled = True
@@ -204,10 +200,11 @@ class ZoomFrame(wx.Frame):
 
         #Start zooming if trigger key pressed while mod_key is down
         if (trigger_down_event and
-            (self.mod_key_now_down or not self.mod_required) and
-            not self.trigger_key_now_down):
+            (self.mod_key_now_down or not self.mod_required) and not
+            self.trigger_key_now_down):
+
             self.trigger_key_now_down = True
-            self.start_zoom()
+            self.start_zoom(self.current_mod_key)
 
         # Do not pass through mod or trigger key events while zooming
         if (self.trigger_key_now_down and
@@ -218,7 +215,7 @@ class ZoomFrame(wx.Frame):
         if event.Key == "Escape" and self.trigger_key_now_down:
             self.zoom_canceled = True
             self.stop_zoom()
-            return False #Do not pass this cancel escape command
+            return False  # Do not pass this cancel escape command
 
         return True  # for pass through key events, False to eat Keys
 
@@ -239,14 +236,15 @@ class ZoomFrame(wx.Frame):
         pass
 
 
-    def start_zoom(self):
+    def start_zoom(self, mod_key):
         """Key press detected: Begin zoom sequence"""
         self.now_zooming = True
         gaze_avg = parse_center(self.data_q)
         print "Initial Base Target:  ", (int(gaze_avg[0]), int(gaze_avg[1]))
         if gaze_avg is not None:
             zm = ZoomMap(center=gaze_avg, size=(400, 400),
-                         data_queue=self.data_q)
+                         data_queue=self.data_q,
+                         mod_key=mod_key)
             self.current_zoom_map = zm
             self.SetSize(zm.base_size)
             self.SetPosition(zm.base_loc)
@@ -254,16 +252,13 @@ class ZoomFrame(wx.Frame):
             self.draw_timer.Start(self.tick_ms)
             self.Show()
 
-
     def stop_zoom(self):
         self.now_zooming = False
         self.Hide()
         self.draw_timer.Stop()
 
-
     def update_zoom(self, event):  # This "event" is required...
         self.canvas.update()
-
 
     def onClose(self, event):
         self.draw_timer.Stop()
@@ -286,9 +281,7 @@ class ZoomCanvas(BufferedCanvas):
         self.update()
 
 
-
 def main():
-
 
     data_q = Queue.Queue()
 
@@ -300,12 +293,12 @@ def main():
                       tick_ms=40,
                       data_queue=data_q)
 
-
     hm = pyHook.HookManager()
     hm.KeyDown = frame.on_key_down_event
     hm.KeyUp = frame.on_key_up_event
     hm.HookKeyboard()
 
+    #TODO: modify this code so tracker only collects data when zooming/scrolling
     data_thread = threading.Thread(target=pytribe.queue_tracker_frames,
                                    args=(data_q, None, 0.02))
     data_thread.daemon = True
