@@ -43,6 +43,12 @@ class ZoomMap(object):
     def __init__(self, center=(400, 400), size=(400, 400), data_queue=None,
                  mod_key=None, zoom_factor=1.05):
 
+        self.init_center = center
+        self.current_target_center = center  # Inferred point to click
+        self.current_zoom_center = center    # Center of current zoom window
+        self.base_rectangle = self.calc_base_rectangle(size)
+
+
         self.base_center = center
         self.base_size = size
         self.base_width = size[0]*1.0
@@ -55,9 +61,11 @@ class ZoomMap(object):
         self.zoom_center_offset_x = 0.0
         self.zoom_center_offset_y = 0.0
 
+
         self.base_loc = (int(center[0] - size[0]/2.0),
                          int(center[1] - size[1]/2.0))
         self.previous_center = center
+
 
         #TODO: Handle case where base_loc +size includes areas outside of the screen?
         if self.base_loc[0] < 0:
@@ -65,9 +73,24 @@ class ZoomMap(object):
         if self.base_loc[1] < 0:
             self.base_loc = (self.base_loc[0], 0)
 
-        self.base_bitmap = screencapture(self.base_loc, self.base_size)
+        self.base_bitmap = screencapture(self.base_loc, self.base_size)  # , debug=True)
         self.zoom_bitmap = self.base_bitmap
         self.base_image = wx.ImageFromBitmap(self.base_bitmap)
+
+    def update_zoom_center(self):
+        pass
+
+    def update_target_center(self):
+        pass
+
+    def calc_base_rectangle(self, full_size=(400,400)):
+        """Return a rectangle (x, y, width, height) for the base bitmap"""
+        base_loc_x = max((0, int(self.init_center[0] - full_size[0]/2.0)))
+        base_loc_y = max((0, int(self.init_center[1] - full_size[1]/2.0)))
+        display_x, display_y = wx.GetDisplaySize()
+        base_width  = min(display_x, base_loc_x + full_size[0])
+        base_height = min(display_y, base_loc_y + full_size[1])
+        return (base_loc_x, base_loc_y, base_width, base_height)
 
     def zoom_size_px(self):
         return (self.base_width * self.current_zoom_factor,
@@ -92,7 +115,8 @@ class ZoomMap(object):
 
         center = self.previous_center
 
-        self.current_zoom_factor *= zoom_factor
+        if self.current_zoom_factor <= 10:  # Don't zoom in beyond all reason...
+            self.current_zoom_factor *= zoom_factor
 
         zoom_pan_speed = 0.2
 
@@ -110,7 +134,7 @@ class ZoomMap(object):
         _x_offset, _y_offset = self.rel_zoom_loc()
 
         #Prevent zooming outside of original box
-        if _x_offset < 0:  x_offset = 0
+        if _x_offset < 0:  _x_offset = 0
         if _y_offset < 0:  _y_offset = 0
         if _x_offset + self.base_size[0] > _width:
             _x_offset = _width - self.base_size[0]
@@ -136,7 +160,7 @@ class ZoomMap(object):
         click_x, click_y = self.abs_zoom_loc()
         print "Final Click Location: ", (click_x, click_y)
         win32api.SetCursorPos((click_x, click_y))
-        if self.mod_key == 'NotCurrentlyUsed':  # Set mod-key for right-click if desired
+        if self.mod_key == 'ChangeMeToEnable':  # Set mod-key for right-click if desired
             win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, click_x, click_y, 0, 0)
             win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, click_x, click_y, 0, 0)
         else:
