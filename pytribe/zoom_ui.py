@@ -91,11 +91,6 @@ class ZoomMap(object):
         self.zoom_bitmap = self.base_bitmap
         self.base_image = wx.ImageFromBitmap(self.base_bitmap)
 
-    def update_target_center(self):
-        x_int = int(round( self.current_zoom_center[0]))
-        y_int = int(round(self.current_zoom_center[1]))
-        self.current_target_center = (x_int, y_int)
-
     def calc_base_rectangle(self, full_size=(400,400)):
         """Return a rectangle (x, y, width, height) for the base bitmap"""
         display_x, display_y = wx.GetDisplaySize()
@@ -114,6 +109,11 @@ class ZoomMap(object):
         return (self.base_size[0] * self.current_zoom_factor,
                 self.base_size[1] * self.current_zoom_factor)
 
+    def update_gaze_center(self):
+        self.gaze_data.extend(pytribe.extract_queue(self.data_q))
+        if self.gaze_data is not []:
+            self.latest_gaze_center = parse_center(self.gaze_data)
+
     def update_zoom_center(self):
         prev_zoom_center = self.current_zoom_center
         zoom_pan_speed = 0.3
@@ -130,6 +130,12 @@ class ZoomMap(object):
                                          self.base_rectangle)
         self.current_zoom_center = trimmed_result
 
+    def update_target_center(self):
+        x_int = int(round(self.current_zoom_center[0]))
+        y_int = int(round(self.current_zoom_center[1]))
+        self.current_target_center = (x_int, y_int)
+        pass
+
     def rel_zoom_loc(self):
         """Zoom center relative to upper-left corner of zoom box"""
         #TODO: This code seems a bit opaque and possibly wrong?  Simplify...
@@ -144,11 +150,6 @@ class ZoomMap(object):
     def abs_zoom_loc(self):
         return (int(self.init_center[0] + self.zoom_center_offset_x),
                 int(self.init_center[1] + self.zoom_center_offset_y))
-
-    def update_gaze_center(self):
-        self.gaze_data.extend(pytribe.extract_queue(self.data_q))
-        if self.gaze_data is not []:
-            self.latest_gaze_center = parse_center(self.gaze_data)
 
     def update_zoom_bmp(self, zoom_factor=1.07, zoomed_coords=True):
 
