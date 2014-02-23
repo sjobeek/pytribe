@@ -14,12 +14,13 @@ def query_tracker(message="""
                     }""",
                   get_status=False, host='localhost',
                   port=6555, buffer_size=1024,
-                  ):
+                  avg_only=False, post_wake_delay=None):
     """Directly query the eye-tribe tracker.
 
     Data is returned as a nested set of dictionaries and lists.
     The eye tracker server must be running and calibrated.
-    Use get_status=True to over-ride message and query status."""
+    Use get_status=True to over-ride message and query status.
+    post_wake_delay to re-read sample _ sec after waking device"""
 
     import socket
     import json
@@ -36,10 +37,19 @@ def query_tracker(message="""
     s.send(message)
     #pause to allow message to come through
     time.sleep(0.01)
-    data = s.recv(buffer_size)
+    if post_wake_delay == None:
+        data = s.recv(buffer_size)
+    else:
+        _ = s.recv(buffer_size)
+        time.sleep(post_wake_delay)
+        s.send(message)
+        data = s.recv(buffer_size)
     s.close()
     try: parsed = json.loads(data)
     except ValueError: parsed = None
+    if avg_only:  # Return a tuple if kwarg avg_only=True
+        center_dict = parsed['values']['frame']['avg']
+        parsed = (center_dict['x'], center_dict['y'])
     return parsed
 
 def extract_queue(q, l=None):
@@ -50,7 +60,6 @@ def extract_queue(q, l=None):
             l.append(q.get(block=False))
         except Queue.Empty:
             return l
-            break
 
 
 def connect_to_tracker(host = 'localhost', port = 6555, buffer_size = 1024):
@@ -59,7 +68,7 @@ def connect_to_tracker(host = 'localhost', port = 6555, buffer_size = 1024):
     return s
 
 
-def queue_tracker_frames(queue, message=None, interval=0.01):
+def queue_tracker_frames(queue, message=None, interval=0.01, event=None):
     """Read data from tracker in PUSH mode.
 
     Data is pushed into queue as it arrives, once per interval seconds.
@@ -81,9 +90,9 @@ def queue_tracker_frames(queue, message=None, interval=0.01):
     s.send(message)
     _ = s.recv(2**15)  # Discard first response
     loop = 0
+    time.sleep(0.01)
     while True:
         loop += 1
-        time.sleep(interval)
         data = s.recv(2**15)
         data_list = [json.loads(line) for line in data.split('\n')
                      if line.split()]
@@ -93,6 +102,12 @@ def queue_tracker_frames(queue, message=None, interval=0.01):
             s.send(message)
             _ = s.recv(2**15)
             loop = 0
+
+        time.sleep(interval)
+
+        if event is not None:
+            if event.is_set():
+                break
     s.close()
 
 

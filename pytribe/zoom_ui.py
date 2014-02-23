@@ -13,30 +13,33 @@ import win32api
 single_monitor_only = True
 
 
-def trim_coordinate(tuple, rectangle=None):
+def trim_coordinate(trim_tuple, rectangle=None):
     """Trim a tuple to stay on the screen, or within a provided rectangle
 
     Rectangles are defined (x, y, w, h)"""
     if single_monitor_only and rectangle is None:
         display_x, display_y = wx.GetDisplaySize()
-        trimmed_center_x = max(0, min(tuple[0], display_x))
-        trimmed_center_y = max(0, min(tuple[1], display_y))
+        trimmed_center_x = max(0, min(trim_tuple[0], display_x))
+        trimmed_center_y = max(0, min(trim_tuple[1], display_y))
     elif rectangle is not None:
         trimmed_center_x = max(rectangle[0],
-                               min(tuple[0], rectangle[0] + rectangle[2]))
+                               min(trim_tuple[0], rectangle[0] + rectangle[2]))
         trimmed_center_y = max(rectangle[1],
-                               min(tuple[1], rectangle[1] + rectangle[3]))
+                               min(trim_tuple[1], rectangle[1] + rectangle[3]))
     else:
         raise NotImplementedError
         #TODO: Implement trimming for two-monitor setup
     return trimmed_center_x, trimmed_center_y
 
 
-def parse_center(data_queue, default=None):
-    gaze_data_update = pytribe.extract_queue(data_queue)
-    if len(gaze_data_update) > 0:
-        center_dict = gaze_data_update[-1]['values']['frame']['avg']
-        center = (center_dict['x'], center_dict['y'])
+def parse_center(data_dict_list, default=None, raw=False):
+    if len(data_dict_list) > 0:
+        if raw:
+            center_dict = data_dict_list[-1]['values']['frame']['raw']
+            center = (center_dict['x'], center_dict['y'])
+        else:
+            center_dict = data_dict_list[-1]['values']['frame']['avg']
+            center = (center_dict['x'], center_dict['y'])
     else:
         center = default
     return center
@@ -52,9 +55,14 @@ class ZoomMap(object):
     """Contains original bitmap, plus transformed zoom coordinates.
 
     Methods allow for translation between "base" coordinates and "zoom" coordinates"""
-    def __init__(self, center=(400, 400), size=(400, 400), data_queue=None,
-                 mod_key=None, zoom_factor=1.05):
+    def __init__(self, size=(400, 400), data_queue=None,
+                 mod_key=None, zoom_factor=1.05, init_gaze_data=pytribe.query_tracker()):
 
+        self.gaze_data = [init_gaze_data]
+        self.data_q = data_queue
+        #time.sleep(0.17)  # Allow eye-tracker time to warm up: 0.17 sec gives ~ 4-5 points
+        self.update_gaze_center()
+        center = parse_center(self.gaze_data)
         self.init_center = trim_coordinate(center)
         self.base_rectangle = self.calc_base_rectangle(size)
         self.base_center = center_of_rect(self.base_rectangle)
@@ -67,7 +75,6 @@ class ZoomMap(object):
         self.current_zoom_center = self.init_center    # Center of current zoom
 
 
-        self.data_q = data_queue
         self.zoom_factor = zoom_factor
         self.mod_key = mod_key
 
@@ -76,6 +83,7 @@ class ZoomMap(object):
         self.zoom_center_offset_y = 0.0
 
         self.previous_center = center
+
 
         #TODO: Handle case where base_loc +size includes areas outside of the screen?
 
@@ -108,14 +116,14 @@ class ZoomMap(object):
 
     def update_zoom_center(self):
         prev_zoom_center = self.current_zoom_center
-        zoom_pan_speed = 0.2
+        zoom_pan_speed = 0.3
         #Alternative update strategies..  hmm
-        #Display zoom center and adjust zoom center relative to prev. zoom center?
+        #Currently adjusts zoom center relative to prev. zoom center: Initially from init_center
         zoom_center_offset_x = (zoom_pan_speed *
-                                 (self.latest_gaze_center[0] - self.base_center[0]) /
+                                 (self.latest_gaze_center[0] - prev_zoom_center[0]) /
                                  self.current_zoom_factor)
         zoom_center_offset_y = (zoom_pan_speed *
-                                 (self.latest_gaze_center[1] - self.base_center[1]) /
+                                 (self.latest_gaze_center[1] - prev_zoom_center[1]) /
                                  self.current_zoom_factor)
         trimmed_result = trim_coordinate((prev_zoom_center[0] + zoom_center_offset_x,
                                           prev_zoom_center[1] + zoom_center_offset_y),
@@ -138,11 +146,11 @@ class ZoomMap(object):
                 int(self.init_center[1] + self.zoom_center_offset_y))
 
     def update_gaze_center(self):
-        gaze_data_update = parse_center(self.data_q)
-        if gaze_data_update not in [None, (0.0, 0.0)]:
-            self.latest_gaze_center = gaze_data_update
+        self.gaze_data.extend(pytribe.extract_queue(self.data_q))
+        if self.gaze_data is not []:
+            self.latest_gaze_center = parse_center(self.gaze_data)
 
-    def update_zoom_bmp(self, zoom_factor=1.05, zoomed_coords=True):
+    def update_zoom_bmp(self, zoom_factor=1.07, zoomed_coords=True):
 
         if self.current_zoom_factor <= 10:  # Don't zoom in beyond all reason...
             self.current_zoom_factor *= zoom_factor
@@ -178,7 +186,6 @@ class ZoomMap(object):
         """Clicks once on zoom target"""
         prev_x, prev_y = win32api.GetCursorPos()
         click_x, click_y = self.current_target_center
-        print "Final Click Location: ", (click_x, click_y)
         win32api.SetCursorPos((click_x, click_y))
         if self.mod_key == 'ChangeMeToEnable':  # Set mod-key for right-click if desired
             win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, click_x, click_y, 0, 0)
@@ -197,13 +204,14 @@ class ZoomFrame(wx.Frame):
     Must pass tick interval and data queue to be used with the tracker"""
     def __init__(self, *args,  **kwargs):
         self.tick_ms = kwargs.pop('tick_ms', 125) # Remove non-standard kwargs
-        self.data_q = kwargs.pop('data_queue', None)
+        self.data_q = kwargs.pop('data_queue', Queue.Queue())
         wx.Frame.__init__(self, *args, **kwargs)
 
         self.raw_data_q = Queue.Queue()
         self.mod_key_now_down = False
         self.trigger_key_now_down = False
         self.now_zooming = False
+        self.zoom_triggered = False
 
         #Define zoom trigger keys:
         self.mod_required = True
@@ -218,12 +226,29 @@ class ZoomFrame(wx.Frame):
         self.draw_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.update_zoom, self.draw_timer)
         #Initialize canvas with dummy zoom_map (just to start program)
-        self.current_zoom_map = ZoomMap(center=(400, 400), size=(400, 400),
+        self.current_zoom_map = ZoomMap(size=(400, 400),
                                         data_queue=self.data_q)
         self.canvas = ZoomCanvas(self, wx.ID_ANY,
                                  size=(400, 400),
                                  zoom_map=self.current_zoom_map)
+        self.thread_shutdown_event = threading.Event()
+        self.data_thread_running = False
+        self.data_thread = None
 
+    def start_data_thread(self):
+
+        if not self.data_thread_running:
+            self.thread_shutdown_event.clear()
+            self.data_thread = threading.Thread(target=pytribe.queue_tracker_frames,
+                                           args=(self.data_q, None, 0.02),
+                                           kwargs={'event':self.thread_shutdown_event})
+            self.data_thread.daemon = True
+            self.data_thread.start()
+            self.data_thread_running = True
+
+    def stop_data_thread(self):
+        self.thread_shutdown_event.set()
+        self.data_thread_running = False
 
     def on_key_down_event(self, event):
         """Detects when zoom hotkey is pressed.
@@ -233,6 +258,10 @@ class ZoomFrame(wx.Frame):
 
         mod_down_event = event.Key in self.mod_keys
         trigger_down_event = event.Key in self.trigger_keys
+
+        #Wake tracker on mod key-press (or any key press?)
+        if mod_down_event and not self.trigger_key_now_down:
+            self.start_data_thread()
 
         if mod_down_event:
             self.mod_key_now_down = True
@@ -248,10 +277,10 @@ class ZoomFrame(wx.Frame):
             self.trigger_key_now_down):
 
             self.trigger_key_now_down = True
-            self.start_zoom(self.current_mod_key)
+            self.start_zoom()
 
         # Do not pass through mod or trigger key events while zooming
-        if (self.trigger_key_now_down and
+        if (self.trigger_key_now_down or self.now_zooming and
             (mod_down_event or trigger_down_event)):
             return False
 
@@ -267,11 +296,12 @@ class ZoomFrame(wx.Frame):
     def on_key_up_event(self, event):
         if event.Key in self.mod_keys:
             self.mod_key_now_down = False
+            if self.data_thread_running and not self.trigger_key_now_down:
+                self.stop_data_thread()
         if event.Key in self.trigger_keys:
             self.trigger_key_now_down = False
-            if self.now_zooming and not self.zoom_canceled:
+            if self.zoom_triggered and not self.zoom_canceled:
                 self.stop_zoom()
-                self.click_target()
         return True
 
 
@@ -279,27 +309,43 @@ class ZoomFrame(wx.Frame):
         self.current_zoom_map.click_target_center()
         pass
 
+    def initialize_queue(self):
+        with self.data_q.mutex:
+            self.data_q.queue.clear()
+        initial_values = pytribe.query_tracker()
+        self.data_q.put(initial_values)
 
-    def start_zoom(self, mod_key):
+    def start_zoom(self):
         """Key press detected: Begin zoom sequence"""
-        self.now_zooming = True
-        gaze_avg = parse_center(self.data_q)
-        print "Initial Base Target:  ", (int(gaze_avg[0]), int(gaze_avg[1]))
-        if gaze_avg is not None:
-            zm = ZoomMap(center=gaze_avg, size=(400, 400),
+        self.zoom_triggered = True
+        self.initialize_queue()
+        self.start_data_thread()
+        #Initialize the ZoomMap after 0.17 seconds, to give eye-tribe a chance to wake up
+        wx.CallLater(170, self.delayed_init_zm)
+
+    def delayed_init_zm(self):
+        if not self.zoom_canceled:
+            self.now_zooming = True
+            zm = ZoomMap(size=(400, 400),
                          data_queue=self.data_q,
-                         mod_key=mod_key)
+                         mod_key=self.current_mod_key)
             self.current_zoom_map = zm
             self.SetSize(zm.base_size)
             self.SetPosition(zm.base_loc)
             self.canvas.reset(zm)
             self.draw_timer.Start(self.tick_ms)
             self.Show()
+            if not self.zoom_triggered:  # Immediately close+click if no-longer triggered
+                self.stop_zoom()
 
     def stop_zoom(self):
+        self.zoom_triggered = False
         self.now_zooming = False
+        self.stop_data_thread()
         self.Hide()
         self.draw_timer.Stop()
+        if not self.zoom_canceled:
+            self.click_target()
 
     def update_zoom(self, event):  # This "event" is required...
         self.canvas.update()
@@ -308,7 +354,6 @@ class ZoomFrame(wx.Frame):
         self.draw_timer.Stop()
         self.Show(False)
         self.Destroy()
-
 
 class ZoomCanvas(BufferedCanvas):
 
@@ -342,11 +387,7 @@ def main():
     hm.KeyUp = frame.on_key_up_event
     hm.HookKeyboard()
 
-    #TODO: modify this code so tracker only collects data when zooming/scrolling
-    data_thread = threading.Thread(target=pytribe.queue_tracker_frames,
-                                   args=(data_q, None, 0.02))
-    data_thread.daemon = True
-    data_thread.start()
+
 
     #frame.Show()
     app.MainLoop()
