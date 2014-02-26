@@ -5,6 +5,20 @@ def jprint(your_json):
     parsed = json.loads(your_json)
     return json.dumps(parsed, indent=4, sort_keys=True)
 
+def parse_center(data_dict_list, default=None, raw=False, round_int=False):
+    """Parses the center value of the LAST item in a LIST of tracker data"""
+    if len(data_dict_list) > 0:
+        if raw:
+            center_dict = data_dict_list[-1]['values']['frame']['raw']
+            center = (center_dict['x'], center_dict['y'])
+        else:
+            center_dict = data_dict_list[-1]['values']['frame']['avg']
+            center = (center_dict['x'], center_dict['y'])
+    else:
+        center = default
+    if round_int:
+        center = (int(round(center[0])), int(round(center[1])))
+    return center
 
 def query_tracker(message="""
                     {
