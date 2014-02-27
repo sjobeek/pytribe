@@ -20,6 +20,16 @@ def parse_center(data_dict_list, default=None, raw=False, round_int=False):
         center = (int(round(center[0])), int(round(center[1])))
     return center
 
+
+def confirm_null_data():
+    time.sleep(0.1)  # Re-query tracker to avoid rejecting blinks
+    re_sample = query_tracker(avg_only=True)
+    if re_sample == (0.0, 0.0):
+        return True
+
+    return False
+
+
 def query_tracker(message="""
                     {
                         "category": "tracker",

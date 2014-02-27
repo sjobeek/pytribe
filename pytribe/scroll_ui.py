@@ -15,14 +15,13 @@ class WindowScroller(object):
 
     def __init__(self, data_queue=None,
                  init_gaze_data=pytribe.query_tracker()):
-        print "init"
         self.data_q = data_queue
         self.gaze_data = [init_gaze_data]
         self.update_gaze_center()
+        self.latest_gaze_data_null = False
 
         self.init_center = trim_coordinate(pytribe.parse_center(self.gaze_data, round_int=True))
         self.latest_gaze_center = self.init_center
-        print "init center: ", self.init_center
         self.window_handle = win32gui.WindowFromPoint(self.latest_gaze_center)
         while self.window_handle == 0:
             time.sleep(0.05)
@@ -31,7 +30,6 @@ class WindowScroller(object):
 
         self.window_rect = win32gui.GetWindowRect(self.window_handle)
         self.initial_cursor_pos = win32api.GetCursorPos()
-        print self.initial_cursor_pos
         self.window_center_y = int((self.window_rect[3] - self.window_rect[1]) / 2.0)
 
         #Sleep required here to avoid bugs...
@@ -46,29 +44,30 @@ class WindowScroller(object):
     def update_gaze_center(self):
         self.gaze_data.extend(pytribe.extract_queue(self.data_q))
         if self.gaze_data is not []:
-            self.latest_gaze_center = pytribe.parse_center(self.gaze_data, round_int=True)
+            updated_center = pytribe.parse_center(self.gaze_data, round_int=True)
+
+            if updated_center == (0, 0):
+                self.latest_gaze_data_null = True
+            else:
+                self.latest_gaze_data_null = False
+                self.latest_gaze_center = updated_center
 
     def shutdown(self):
-        print "returning mouse to previous position: ", self.initial_cursor_pos
         win32api.SetCursorPos(self.initial_cursor_pos)
 
     def update(self):
         self.update_gaze_center()
-        print self.window_center_y, self.latest_gaze_center[1]
 
-        #Positive if looking at top of screen
-        y_delta = self.window_center_y - self.latest_gaze_center[1]
-        print y_delta
+        #Positive if looking at top of screen, 200 pixel offset up
+        y_delta = (self.window_center_y - 200) - self.latest_gaze_center[1]
         if y_delta < -100:
             self.scroll(-1)
-            if y_delta < -200:
+            if y_delta < -300:
                 self.scroll(-1)
         if y_delta > 100:
             self.scroll(1)
-            if y_delta > 200:
+            if y_delta > 300:
                 self.scroll(1)
-
-        pass
 
     def scroll(self, counts):
         """Scroll the mouse wheel count times (positive = up, negative = down)"""

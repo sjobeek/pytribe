@@ -7,6 +7,7 @@ from .bufferedcanvas import BufferedCanvas
 import pytribe
 from .zoom_map import ZoomMap
 from .scroll_ui import WindowScroller
+import time
 import scroll_ui
 
 
@@ -29,6 +30,8 @@ class ZoomFrame(wx.Frame):
         self.trigger_key_now_down = False
         self.now_zooming = False
         self.zoom_triggered = False
+        self.cancel_scroll_with_gaze = True
+        self.stop_scroll_on_space = True
 
         #Define zoom trigger keys:
         self.mod_required = True
@@ -38,6 +41,7 @@ class ZoomFrame(wx.Frame):
         self.scroll_trigger_keys = ['Oem_2'] #back-slash key
         self.current_mod_key = None
         self.zoom_canceled = False
+        self.cancel_zoom_with_gaze = True
 
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
@@ -125,14 +129,20 @@ class ZoomFrame(wx.Frame):
             self.stop_zoom()
             return False  # Do not pass this cancel escape command
 
+        #Cancel scroll on space if now scrolling
+        if event.Key == "Space" and self.now_scrolling and self.stop_scroll_on_space:
+            self.stop_scroll()
+            return False  # Don't pass this key
+
         return True  # for pass through key events, False to eat Keys
 
 
     def on_key_up_event(self, event):
         if event.Key in self.mod_keys:
             self.mod_key_now_down = False
-            if self.data_thread_running and not self.trigger_key_now_down:
+            if self.data_thread_running and not self.now_zooming and not self.now_scrolling:
                 self.stop_data_thread()
+
 
         if event.Key in self.trigger_keys:
             self.trigger_key_now_down = False
@@ -141,7 +151,7 @@ class ZoomFrame(wx.Frame):
 
         if event.Key in self.scroll_trigger_keys:
             self.scroll_trigger_key_now_down = False
-            if self.now_scrolling:
+            if self.now_scrolling and not self.stop_scroll_on_space:
                 self.stop_scroll()
 
         return True
@@ -168,7 +178,16 @@ class ZoomFrame(wx.Frame):
 
     def update_scroll(self, event):
         self.current_scroller.update()
-        pass
+
+        if self.cancel_scroll_with_gaze:
+            latest_center = self.current_scroller.latest_gaze_center
+            window_rect = self.current_scroller.window_rect
+            if ((latest_center[0] - window_rect[0] < -400 or  # gaze outside window left
+                 latest_center[0] - window_rect[2] > 400)):  # gaze outside window right
+                self.stop_scroll()
+            elif self.current_scroller.latest_gaze_data_null:
+                if pytribe.confirm_null_data():
+                    self.stop_scroll()
 
     def stop_scroll(self):
         self.now_scrolling = False
@@ -212,6 +231,11 @@ class ZoomFrame(wx.Frame):
 
     def update_zoom(self, event):  # This "event" is required...
         self.canvas.update()
+
+        if self.cancel_zoom_with_gaze and self.current_zoom_map.latest_gaze_data_null:
+            if pytribe.confirm_null_data():
+                self.zoom_canceled = True
+                self.stop_zoom()
 
     def onClose(self, event):
         self.draw_timer.Stop()

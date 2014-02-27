@@ -58,6 +58,7 @@ class ZoomMap(object):
         self.current_target_center = self.init_center  # Inferred point to click
         #May confuse user if zoom_center doesn't start at base_center...  hmmm
         self.current_zoom_center = self.init_center    # Center of current zoom
+        self.latest_gaze_data_null = False
 
         self.zoom_factor = zoom_factor
         self.mod_key = mod_key
@@ -75,7 +76,7 @@ class ZoomMap(object):
         self.zoom_bitmap = self.base_bitmap
         self.base_image = wx.ImageFromBitmap(self.base_bitmap)
 
-    def calc_base_rectangle(self, full_size=(400,400)):
+    def calc_base_rectangle(self, full_size=(400, 400)):
         """Return a rectangle (x, y, width, height) for the base bitmap"""
         display_x, display_y = wx.GetDisplaySize()
         max_loc_x = min(display_x - full_size[0],
@@ -95,7 +96,12 @@ class ZoomMap(object):
     def update_gaze_center(self):
         self.gaze_data.extend(pytribe.extract_queue(self.data_q))
         if self.gaze_data is not []:
-            self.latest_gaze_center = pytribe.parse_center(self.gaze_data)
+            updated_center = pytribe.parse_center(self.gaze_data)
+            if updated_center == (0.0, 0.0):
+                self.latest_gaze_data_null = True
+            else:
+                self.latest_gaze_data_null = False
+                self.latest_gaze_center = updated_center
 
     def update_zoom_center(self):
         prev_zoom_center = self.current_zoom_center
