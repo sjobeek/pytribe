@@ -22,7 +22,7 @@ The current version ONLY supports simple reading of data using the pull and push
 
 To simply read a single set of data, first `import pytribe` then `data = pytribe.query_tracker()`
 
-See `example.py` for an example of how to read tracking data using non-blocking threads and a queue. This is useful for GUI applications where you can't allow the data collection polling to block the main loop.
+See `example.py` for an example of how to read tracking data using non-blocking threads and a queue. This is useful for GUI applications where you can't allow the data collection polling to block the main loop.  [NOTE: Currently a bug in this implementation - recommend using pull method only for now]
 
 
 
